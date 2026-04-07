@@ -84,13 +84,13 @@ class PGCollection:
             self._conn.autocommit = True
         return self._conn
 
-    def _ensure_setup(self):
-        if self._setup_done:
+    def _detect_extensions(self):
+        """Detect vector extension type. Does NOT create tables."""
+        if self._vec_type:
             return
         conn = self._get_conn()
         cur = conn.cursor()
 
-        # Detect installed extensions
         cur.execute(
             "SELECT extname FROM pg_extension WHERE extname IN ('pg_sorted_heap', 'vector')"
         )
@@ -100,14 +100,11 @@ class PGCollection:
             self._vec_type = "svec"
             self._am = "sorted_heap"
             self._index_am = "sorted_hnsw"
-            logger.info("Using pg_sorted_heap backend (svec + sorted_hnsw + zone maps)")
         elif "vector" in installed:
             self._vec_type = "vector"
             self._am = "heap"
             self._index_am = "hnsw"
-            logger.info("Using pgvector backend (vector + hnsw)")
         else:
-            # Try to create extensions
             for ext, vt, am, iam in [
                 ("pg_sorted_heap", "svec", "sorted_heap", "sorted_hnsw"),
                 ("vector", "vector", "heap", "hnsw"),
@@ -117,7 +114,6 @@ class PGCollection:
                     self._vec_type = vt
                     self._am = am
                     self._index_am = iam
-                    logger.info(f"Created extension {ext}")
                     break
                 except Exception:
                     pass
@@ -128,6 +124,22 @@ class PGCollection:
                     "Install: CREATE EXTENSION vector; or CREATE EXTENSION pg_sorted_heap;"
                 )
 
+    def _table_exists(self):
+        conn = self._get_conn()
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT 1 FROM information_schema.tables "
+            "WHERE table_name = %s AND table_schema = 'public'",
+            (self.table,),
+        )
+        return cur.fetchone() is not None
+
+    def _ensure_setup(self):
+        if self._setup_done:
+            return
+        self._detect_extensions()
+        conn = self._get_conn()
+        cur = conn.cursor()
         self._create_table(cur)
         self._setup_done = True
 
@@ -183,9 +195,10 @@ class PGCollection:
         # issues on very small graphs.
         logger.info(f"Created table {self.table} ({self._am}, {self._vec_type})")
 
-    def ensure_vector_index(self):
-        """Create HNSW vector index if it doesn't exist. For large collections (5K+)."""
-        self._ensure_setup()
+    def _maybe_create_vector_index(self):
+        """Create HNSW vector index once the collection exceeds the threshold.
+        Called automatically after add(). Exact cosine is fast enough for
+        small collections; HNSW becomes worthwhile at scale."""
         conn = self._get_conn()
         cur = conn.cursor()
         cur.execute(
@@ -193,13 +206,12 @@ class PGCollection:
             (f"{self.table}_vec_idx",),
         )
         if cur.fetchone():
-            return
+            return  # already exists
+
         count = self.count()
         if count < 5000:
-            logger.info(
-                f"Skipping HNSW index for {count} rows (exact cosine is fast enough)"
-            )
-            return
+            return  # too small for HNSW to help
+
         ops = "svec_cosine_ops" if self._vec_type == "svec" else "vector_cosine_ops"
         cur.execute(
             f"CREATE INDEX {self.table}_vec_idx ON {self.table} "
@@ -279,6 +291,8 @@ class PGCollection:
                     f"ON CONFLICT (id) DO NOTHING",
                     (doc_id, wing, room, doc, emb_str, json.dumps(meta)),
                 )
+
+        self._maybe_create_vector_index()
 
     def query(self, query_texts=None, query_embeddings=None, n_results=5, where=None, include=None):
         """Semantic search — returns results in ChromaDB format."""
@@ -396,9 +410,13 @@ class PGClient:
         self._collections = {}
 
     def get_collection(self, name):
+        """Get existing collection. Raises if table doesn't exist (matches ChromaDB)."""
         if name not in self._collections:
             col = PGCollection(self.dsn, table_name=name)
-            col._ensure_setup()
+            col._detect_extensions()
+            if not col._table_exists():
+                raise ValueError(f"Collection {name} does not exist")
+            col._setup_done = True  # table exists, skip create
             self._collections[name] = col
         return self._collections[name]
 

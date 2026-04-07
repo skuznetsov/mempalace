@@ -45,6 +45,7 @@ include = ["mempalace*"]
 mempalace = "mempalace:main"
 
 [project.optional-dependencies]
+postgresql = ["psycopg2-binary>=2.9", "sentence-transformers>=2.0"]
 dev = ["pytest>=7.0", "build>=1.0", "twine>=4.0"]
 
 [tool.ruff]
