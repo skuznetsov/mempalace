@@ -26,7 +26,7 @@ from datetime import datetime
 from .config import MempalaceConfig
 from .searcher import search_memories
 from .palace_graph import traverse, find_tunnels, graph_stats
-import chromadb
+from .backend import get_collection as _get_backend_collection
 
 from .knowledge_graph import KnowledgeGraph
 
@@ -39,12 +39,9 @@ _config = MempalaceConfig()
 
 
 def _get_collection(create=False):
-    """Return the ChromaDB collection, or None on failure."""
+    """Return a collection (ChromaDB or PostgreSQL), or None on failure."""
     try:
-        client = chromadb.PersistentClient(path=_config.palace_path)
-        if create:
-            return client.get_or_create_collection(_config.collection_name)
-        return client.get_collection(_config.collection_name)
+        return _get_backend_collection(_config.palace_path, create=create)
     except Exception:
         return None
 

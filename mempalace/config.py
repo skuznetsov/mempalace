@@ -98,8 +98,26 @@ class MempalaceConfig:
         return self._file_config.get("palace_path", DEFAULT_PALACE_PATH)
 
     @property
+    def backend(self):
+        """Storage backend: 'chromadb' (default) or 'postgresql'."""
+        env_val = os.environ.get("MEMPALACE_BACKEND")
+        if env_val:
+            return env_val
+        return self._file_config.get("backend", "chromadb")
+
+    @property
+    def pg_dsn(self):
+        """PostgreSQL connection string (used when backend='postgresql')."""
+        env_val = os.environ.get("MEMPALACE_PG_DSN")
+        if env_val:
+            return env_val
+        return self._file_config.get(
+            "pg_dsn", "host=localhost port=5432 dbname=mempalace"
+        )
+
+    @property
     def collection_name(self):
-        """ChromaDB collection name."""
+        """Collection/table name."""
         return self._file_config.get("collection_name", DEFAULT_COLLECTION_NAME)
 
     @property
