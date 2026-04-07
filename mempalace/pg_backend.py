@@ -84,8 +84,12 @@ class PGCollection:
             self._conn.autocommit = True
         return self._conn
 
-    def _detect_extensions(self):
-        """Detect vector extension type. Does NOT create tables."""
+    def _detect_extensions(self, create=False):
+        """Detect vector extension type.
+
+        When create=False (default), only inspects pg_extension — no DDL.
+        When create=True, attempts CREATE EXTENSION if nothing is installed.
+        """
         if self._vec_type:
             return
         conn = self._get_conn()
@@ -104,7 +108,7 @@ class PGCollection:
             self._vec_type = "vector"
             self._am = "heap"
             self._index_am = "hnsw"
-        else:
+        elif create:
             for ext, vt, am, iam in [
                 ("pg_sorted_heap", "svec", "sorted_heap", "sorted_hnsw"),
                 ("vector", "vector", "heap", "hnsw"),
@@ -118,11 +122,11 @@ class PGCollection:
                 except Exception:
                     pass
 
-            if not self._vec_type:
-                raise RuntimeError(
-                    "PostgreSQL backend requires pgvector or pg_sorted_heap. "
-                    "Install: CREATE EXTENSION vector; or CREATE EXTENSION pg_sorted_heap;"
-                )
+        if not self._vec_type:
+            raise RuntimeError(
+                "PostgreSQL backend requires pgvector or pg_sorted_heap. "
+                "Install: CREATE EXTENSION vector; or CREATE EXTENSION pg_sorted_heap;"
+            )
 
     def _table_exists(self):
         conn = self._get_conn()
@@ -137,7 +141,7 @@ class PGCollection:
     def _ensure_setup(self):
         if self._setup_done:
             return
-        self._detect_extensions()
+        self._detect_extensions(create=True)
         conn = self._get_conn()
         cur = conn.cursor()
         self._create_table(cur)
